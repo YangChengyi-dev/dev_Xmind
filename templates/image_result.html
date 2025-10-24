@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>XMind解析结果 - 图片模式</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background-color: #f5f5f5;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+        
+        .header {
+            background-color: #f0f7ff;
+            padding: 20px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        
+        .header h1 {
+            font-size: 24px;
+            color: #333;
+            margin-bottom: 10px;
+        }
+        
+        .filename {
+            font-size: 16px;
+            color: #666;
+            background-color: #fff;
+            padding: 8px 12px;
+            border-radius: 4px;
+            display: inline-block;
+        }
+        
+        .navigation {
+            padding: 20px;
+            background-color: #fafafa;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        
+        .navigation h2 {
+            font-size: 18px;
+            margin-bottom: 15px;
+            color: #333;
+        }
+        
+        .sheets-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        
+        .sheet-button {
+            padding: 10px 20px;
+            border: 2px solid #e0e0e0;
+            background-color: white;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 14px;
+            white-space: nowrap;
+        }
+        
+        .sheet-button:hover {
+            background-color: #f0f7ff;
+            border-color: #4a90e2;
+        }
+        
+        .sheet-button.active {
+            background-color: #4a90e2;
+            color: white;
+            border-color: #4a90e2;
+        }
+        
+        .content {
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        
+        .image-container {
+            margin: 20px 0;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            border-radius: 8px;
+            overflow: hidden;
+            background-color: white;
+        }
+        
+        .result-image {
+            max-width: 100%;
+            height: auto;
+            display: block;
+        }
+        
+        .actions {
+            margin-top: 20px;
+            display: flex;
+            gap: 15px;
+        }
+        
+        .action-button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+        
+        .btn-download {
+            background-color: #52c41a;
+            color: white;
+        }
+        
+        .btn-download:hover {
+            background-color: #45a719;
+        }
+        
+        .btn-back {
+            background-color: #f5f5f5;
+            color: #666;
+            border: 1px solid #d9d9d9;
+        }
+        
+        .btn-back:hover {
+            background-color: #e6e6e6;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 60px 40px;
+            color: #666;
+            background-color: rgba(255, 255, 255, 0.95);
+            border-radius: 8px;
+            min-height: 200px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .loading-spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #4a90e2;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 20px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .loading-text {
+            font-size: 16px;
+            font-weight: 500;
+        }
+        
+        .sheet-button:disabled {
+            background-color: #f5f5f5;
+            color: #999;
+            border-color: #e0e0e0;
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+        
+        .action-button:disabled {
+            background-color: #f5f5f5 !important;
+            color: #999 !important;
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+        
+        /* 响应式设计 */
+        @media (max-width: 768px) {
+            body {
+                padding: 10px;
+            }
+            
+            .container {
+                border-radius: 4px;
+            }
+            
+            .header h1 {
+                font-size: 20px;
+            }
+            
+            .sheets-list {
+                flex-direction: column;
+            }
+            
+            .sheet-button {
+                width: 100%;
+                text-align: left;
+            }
+            
+            .actions {
+                flex-direction: column;
+                width: 100%;
+            }
+            
+            .action-button {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>XMind解析结果 - 图片模式</h1>
+            <div class="filename">文件名: {{ filename }}</div>
+        </div>
+        
+        <div class="navigation">
+            <h2>画布列表</h2>
+            <div class="sheets-list">
+                {% for sheet in sheets %}
+                <button class="sheet-button {{ 'active' if sheet.id == current_sheet else '' }}"
+                        onclick="switchSheet({{ sheet.id }})"
+                        id="sheetButton{{ sheet.id }}"
+                        disabled="{{ not parsing_completed }}">
+                    {{ sheet.title }}
+                </button>
+                {% endfor %}
+            </div>
+        </div>
+        
+        <div class="content">
+            <div class="image-container">
+                <img id="resultImage" class="result-image" src="/get_sheet_image/{{ current_sheet }}" 
+                     alt="XMind思维导图" onload="hideLoading()" onError="showError()">
+            </div>
+            
+            <div id="loadingIndicator" class="loading">
+                <div class="loading-spinner"></div>
+                <div class="loading-text">正在生成图片，请稍候...</div>
+            </div>
+            
+            <div class="actions">
+                <a href="/download_sheet_image/{{ current_sheet }}" class="action-button btn-download" id="downloadButton" 
+                   disabled="{{ not parsing_completed }}">
+                    下载当前画布图片
+                </a>
+                <a href="/" class="action-button btn-back">
+                    返回首页
+                </a>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // 当前选中的画布ID
+        let currentSheetId = {{ current_sheet }};
+        // 解析状态
+        let parsingCompleted = {{ 'true' if parsing_completed else 'false' }};
+        // 文件大小（MB）
+        let fileSize = {{ file_size|default(0) }};
+        // 轮询计数器
+        let pollingCount = 0;
+        // 最大轮询次数 - 根据文件大小动态调整
+        const MAX_POLLING = fileSize > 30 ? 60 : fileSize > 10 ? 45 : 30;
+        // 轮询间隔（毫秒）
+        const POLLING_INTERVAL = 1000;
+        
+        // 页面加载时的初始化
+        window.addEventListener('load', function() {
+            // 确保图片元素已加载
+            const imgElement = document.getElementById('resultImage');
+            
+            // 如果解析尚未完成，显示加载中状态
+            if (!parsingCompleted) {
+                showParsingLoading();
+                // 定期检查解析状态
+                checkParsingStatus();
+            } else {
+                // 解析已完成，设置初始图片加载
+                if (imgElement.complete) {
+                    hideLoading();
+                } else {
+                    // 图片仍在加载中
+                    showImageLoading();
+                }
+            }
+        });
+        
+        // 切换画布
+        function switchSheet(sheetId) {
+            // 只有在解析完成且ID不同时才切换
+            if (!parsingCompleted) {
+                // 显示提示消息
+                showToast('文件正在解析中，请稍候再切换画布', 'info');
+                return;
+            }
+            
+            if (sheetId === currentSheetId) return;
+            
+            // 更新当前画布ID
+            currentSheetId = sheetId;
+            
+            // 更新按钮状态
+            document.querySelectorAll('.sheet-button').forEach(button => {
+                button.classList.remove('active');
+            });
+            const activeButton = document.querySelector(`#sheetButton${sheetId}`);
+            if (activeButton) {
+                activeButton.classList.add('active');
+            }
+            
+            // 更新图片URL
+            const imgElement = document.getElementById('resultImage');
+            
+            // 显示加载状态
+            showImageLoading();
+            
+            // 添加随机参数防止缓存
+            imgElement.src = `/get_sheet_image/${sheetId}?t=${new Date().getTime()}`;
+            
+            // 更新下载链接
+            const downloadButton = document.getElementById('downloadButton');
+            downloadButton.href = `/download_sheet_image/${sheetId}`;
+        }
+        
+        // 图片加载完成后隐藏加载状态
+        function hideLoading() {
+            document.getElementById('loadingIndicator').style.display = 'none';
+        }
+        
+        // 显示解析中的加载状态
+        function showParsingLoading() {
+            const loadingIndicator = document.getElementById('loadingIndicator');
+            loadingIndicator.style.display = 'block';
+            loadingIndicator.innerHTML = `
+                <div class="loading-spinner"></div>
+                <div class="loading-text">正在解析文件，请稍候...</div>
+            `;
+            
+            // 禁用所有按钮
+            disableAllButtons();
+        }
+        
+        // 显示图片加载状态
+        function showImageLoading() {
+            const loadingIndicator = document.getElementById('loadingIndicator');
+            loadingIndicator.style.display = 'block';
+            loadingIndicator.innerHTML = `
+                <div class="loading-spinner"></div>
+                <div class="loading-text">正在加载图片，请稍候...</div>
+            `;
+        }
+        
+        // 禁用所有按钮
+        function disableAllButtons() {
+            document.querySelectorAll('.sheet-button').forEach(button => {
+                button.disabled = true;
+            });
+            document.getElementById('downloadButton').disabled = true;
+        }
+        
+        // 启用所有按钮
+        function enableAllButtons() {
+            document.querySelectorAll('.sheet-button').forEach(button => {
+                button.disabled = false;
+            });
+            document.getElementById('downloadButton').disabled = false;
+        }
+        
+        // 图片加载出错时显示错误信息
+        function showError() {
+            const loadingIndicator = document.getElementById('loadingIndicator');
+            loadingIndicator.style.display = 'block';
+            loadingIndicator.innerHTML = `
+                <div style="color: #ff4d4f; font-size: 16px; margin-bottom: 10px;">⚠️</div>
+                <div style="color: #ff4d4f; font-weight: 500;">图片加载失败，请重试</div>
+                <button onclick="retryLoadingImage()" style="margin-top: 15px; padding: 8px 16px; background-color: #1890ff; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                    重试
+                </button>
+            `;
+        }
+        
+        // 重试加载图片
+        function retryLoadingImage() {
+            showImageLoading();
+            const imgElement = document.getElementById('resultImage');
+            imgElement.src = `/get_sheet_image/${currentSheetId}?t=${new Date().getTime()}`;
+        }
+        
+        // 显示提示消息
+        function showToast(message, type = 'info') {
+            // 检查是否已存在toast，存在则移除
+            const existingToast = document.getElementById('toast-message');
+            if (existingToast) {
+                document.body.removeChild(existingToast);
+            }
+            
+            // 创建新的toast元素
+            const toast = document.createElement('div');
+            toast.id = 'toast-message';
+            toast.style.position = 'fixed';
+            toast.style.top = '20px';
+            toast.style.right = '20px';
+            toast.style.padding = '12px 20px';
+            toast.style.borderRadius = '6px';
+            toast.style.color = 'white';
+            toast.style.fontSize = '14px';
+            toast.style.zIndex = '10000';
+            toast.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.15)';
+            toast.style.opacity = '0';
+            toast.style.transition = 'opacity 0.3s ease';
+            
+            // 根据类型设置背景色
+            if (type === 'success') {
+                toast.style.backgroundColor = '#52c41a';
+            } else if (type === 'error') {
+                toast.style.backgroundColor = '#ff4d4f';
+            } else {
+                toast.style.backgroundColor = '#1890ff';
+            }
+            
+            toast.textContent = message;
+            document.body.appendChild(toast);
+            
+            // 显示toast
+            setTimeout(() => {
+                toast.style.opacity = '1';
+            }, 10);
+            
+            // 3秒后隐藏toast
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                setTimeout(() => {
+                    if (document.body.contains(toast)) {
+                        document.body.removeChild(toast);
+                    }
+                }, 300);
+            }, 3000);
+        }
+        
+        // 检查解析状态（增强版）
+        function checkParsingStatus() {
+            // 增加轮询计数
+            pollingCount++;
+            
+            // 对于大文件，显示更详细的进度信息
+            updateLoadingMessage();
+            
+            if (pollingCount <= MAX_POLLING) {
+                // 对于大文件，根据文件大小调整轮询间隔
+                const actualInterval = fileSize > 30 ? 1500 : fileSize > 10 ? 1200 : POLLING_INTERVAL;
+                
+                setTimeout(() => {
+                    // 对于大文件，我们直接依赖后端设置的parsing_completed状态
+                    // 但添加额外的检查确保画布按钮正确启用
+                    if (!parsingCompleted) {
+                        // 尝试从sessionStorage获取解析状态（作为备用）
+                        const storedStatus = sessionStorage.getItem('parsing_completed');
+                        if (storedStatus === 'true') {
+                            parsingCompleted = true;
+                        }
+                    }
+                    
+                    if (parsingCompleted) {
+                        // 确保所有按钮都被正确启用
+                        enableAllButtons();
+                        
+                        // 刷新当前图片
+                        const imgElement = document.getElementById('resultImage');
+                        imgElement.src = `/get_sheet_image/${currentSheetId}?t=${new Date().getTime()}`;
+                        
+                        // 显示成功提示，根据文件大小提供不同的消息
+                        const successMessage = fileSize > 30 
+                            ? `大型文件(${fileSize.toFixed(1)}MB)解析完成，可以切换画布了`
+                            : `解析完成，现在可以切换画布了`;
+                        showToast(successMessage, 'success');
+                        
+                        // 存储解析完成状态到sessionStorage作为备用
+                        sessionStorage.setItem('parsing_completed', 'true');
+                    } else {
+                        // 继续轮询
+                        checkParsingStatus();
+                    }
+                }, actualInterval);
+            } else {
+                // 轮询次数过多，显示超时错误，但提供更友好的选项
+                document.getElementById('loadingIndicator').innerHTML = `
+                    <div style="color: #ff4d4f; font-size: 16px; margin-bottom: 10px;">⚠️</div>
+                    <div style="color: #ff4d4f; font-weight: 500;">解析耗时较长</div>
+                    <div style="margin: 10px 0; color: #666;">文件较大(${fileSize.toFixed(1)}MB)，可能需要更长时间</div>
+                    <div style="display: flex; gap: 10px; margin-top: 15px;">
+                        <button onclick="retryParsing()" style="padding: 8px 16px; background-color: #1890ff; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                            继续等待
+                        </button>
+                        <button onclick="location.reload()" style="padding: 8px 16px; background-color: #f5f5f5; color: #666; border: 1px solid #d9d9d9; border-radius: 4px; cursor: pointer;">
+                            刷新重试
+                        </button>
+                    </div>
+                `;
+            }
+        }
+        
+        // 更新加载消息
+        function updateLoadingMessage() {
+            const loadingIndicator = document.getElementById('loadingIndicator');
+            const progress = Math.min((pollingCount / MAX_POLLING) * 100, 100);
+            
+            let message = '';
+            if (fileSize > 30) {
+                message = `正在解析大型文件(${fileSize.toFixed(1)}MB)，请耐心等待...`;
+            } else if (fileSize > 10) {
+                message = `正在解析较大文件(${fileSize.toFixed(1)}MB)...`;
+            } else {
+                message = '正在解析文件，请稍候...';
+            }
+            
+            loadingIndicator.innerHTML = `
+                <div class="loading-spinner"></div>
+                <div class="loading-text">${message}</div>
+                <div style="margin-top: 10px; color: #666; font-size: 14px;">
+                    进度: ${progress.toFixed(0)}%
+                </div>
+                <button onclick="cancelParsing()" style="margin-top: 15px; padding: 6px 12px; background-color: #f5f5f5; color: #666; border: 1px solid #d9d9d9; border-radius: 4px; cursor: pointer; font-size: 14px;">
+                    取消
+                </button>
+            `;
+        }
+        
+        // 重试解析
+        function retryParsing() {
+            pollingCount = Math.max(0, pollingCount - 10); // 重置部分计数
+            showParsingLoading();
+            checkParsingStatus();
+        }
+        
+        // 取消解析
+        function cancelParsing() {
+            if (confirm('确定要取消解析吗？这将返回首页。')) {
+                window.location.href = '/';
+            }
+        }
+    </script>
+</body>
+</html>

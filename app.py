@@ -1,8 +1,11 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, send_file
+from flask import Flask, render_template, request, redirect, url_for, flash, send_file, session
 import os
 import tempfile
 import io
 import networkx as nx
+# 配置Matplotlib使用非交互式后端，避免线程安全问题
+import matplotlib
+matplotlib.use('Agg')  # 使用Agg后端，非交互式
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 from PIL import Image
@@ -17,6 +20,8 @@ app = Flask(__name__)
 app.secret_key = 'your-secret-key'
 app.config['UPLOAD_FOLDER'] = tempfile.gettempdir()
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB 限制
+# 增加session存储时间以保存解析数据
+app.config['PERMANENT_SESSION_LIFETIME'] = 3600  # 1小时
 
 # 确保上传文件夹存在
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
@@ -80,12 +85,51 @@ def upload_file():
         xmind_data = xmind_to_dict(temp_file_path)
         
         if parse_mode == 'image':
-            # 生成图片
-            img_buffer = xmind_to_image(xmind_data)
+            # 为解析后的数据创建一个唯一的临时文件路径
+            import uuid
+            session_id = str(uuid.uuid4())
+            data_file_path = os.path.join(app.config['UPLOAD_FOLDER'], f'xmind_data_{session_id}.json')
             
-            # 返回图片，支持在线浏览和下载
-            return send_file(img_buffer, mimetype='image/png', as_attachment=False,
-                           download_name='xmind_map.png')
+            # 将解析后的数据保存到临时文件中（使用JSON格式）
+            import json
+            with open(data_file_path, 'w', encoding='utf-8') as f:
+                # 自定义序列化函数处理复杂对象
+                def custom_serializer(obj):
+                    if isinstance(obj, bytes):
+                        return obj.decode('utf-8', errors='replace')
+                    raise TypeError(f'Object of type {type(obj).__name__} is not JSON serializable')
+                
+                # 保存为JSON字符串
+                json.dump(xmind_data, f, ensure_ascii=False, default=custom_serializer)
+            
+            # 开启session，只保存必要信息
+            session.permanent = True
+            session['data_file_path'] = data_file_path
+            session['filename'] = file.filename
+            
+            # 提取画布信息（只保存必要的元数据）
+            sheets_info = []
+            for i, sheet in enumerate(xmind_data):
+                sheets_info.append({
+                    'id': i,
+                    'title': sheet.get('title', f'画布 {i+1}')
+                })
+            
+            # 保存画布信息，标记解析为已完成
+            session['sheets_info'] = sheets_info
+            session['parsing_completed'] = True  # 对于36M这样的大文件，解析已经在xmind_to_dict完成
+            
+            # 获取文件大小，用于前端提示
+            import time
+            file_size = os.path.getsize(temp_file_path) / (1024 * 1024)  # MB
+            
+            # 渲染画布选择页面，为所有文件返回模板
+            return render_template('image_result.html', 
+                                 sheets=sheets_info,
+                                 current_sheet=0,
+                                 filename=file.filename,
+                                 parsing_completed=True,
+                                 file_size=file_size)
         else:
             # 生成HTML结构（列表形式）
             html_structure = parse_xmind_structure(xmind_data)
@@ -98,12 +142,81 @@ def upload_file():
         return redirect(url_for('index'))
     
     finally:
-        # 清理临时文件
+        # 清理原始临时文件，但保留解析后的数据文件
         if os.path.exists(temp_file_path):
             try:
                 os.remove(temp_file_path)
             except:
                 pass
+
+# 获取特定画布的图片路由
+@app.route('/get_sheet_image/<int:sheet_id>')
+def get_sheet_image(sheet_id):
+    # 检查session中是否有解析数据文件路径
+    if 'data_file_path' not in session or 'sheets_info' not in session:
+        flash('没有找到解析数据，请重新上传文件')
+        return redirect(url_for('index'))
+    
+    data_file_path = session['data_file_path']
+    sheets_info = session['sheets_info']
+    
+    # 检查画布ID是否有效
+    if sheet_id < 0 or sheet_id >= len(sheets_info):
+        flash('无效的画布ID')
+        return redirect(url_for('index'))
+    
+    try:
+        # 从临时文件加载解析后的数据
+        import json
+        with open(data_file_path, 'r', encoding='utf-8') as f:
+            xmind_data = json.load(f)
+        
+        # 生成指定画布的图片
+        sheet_data = xmind_data[sheet_id]
+        img_buffer = generate_sheet_image(sheet_data)
+        
+        # 返回图片
+        return send_file(img_buffer, mimetype='image/png', as_attachment=False,
+                       download_name=f'sheet_{sheet_id}.png')
+    
+    except Exception as e:
+        flash(f'生成图片时出错: {str(e)}')
+        return redirect(url_for('index'))
+
+# 下载特定画布的图片路由
+@app.route('/download_sheet_image/<int:sheet_id>')
+def download_sheet_image(sheet_id):
+    # 检查session中是否有解析数据文件路径
+    if 'data_file_path' not in session or 'sheets_info' not in session:
+        flash('没有找到解析数据，请重新上传文件')
+        return redirect(url_for('index'))
+    
+    data_file_path = session['data_file_path']
+    sheets_info = session['sheets_info']
+    
+    # 检查画布ID是否有效
+    if sheet_id < 0 or sheet_id >= len(sheets_info):
+        flash('无效的画布ID')
+        return redirect(url_for('index'))
+    
+    try:
+        # 从临时文件加载解析后的数据
+        import json
+        with open(data_file_path, 'r', encoding='utf-8') as f:
+            xmind_data = json.load(f)
+        
+        # 生成指定画布的图片
+        sheet_data = xmind_data[sheet_id]
+        sheet_title = sheet_data.get('title', f'sheet_{sheet_id}')
+        img_buffer = generate_sheet_image(sheet_data)
+        
+        # 下载图片
+        return send_file(img_buffer, mimetype='image/png', as_attachment=True,
+                       download_name=f'{sheet_title}.png')
+    
+    except Exception as e:
+        flash(f'生成图片时出错: {str(e)}')
+        return redirect(url_for('index'))
 
 # 优化解析大文件的函数
 def parse_xmind_structure(xmind_data):
@@ -143,139 +256,215 @@ def parse_xmind_structure(xmind_data):
     
     return '\n'.join(html_structure)
 
-def xmind_to_image(xmind_data):
-    """将XMind数据转换为图片"""
-    # 创建图像缓冲区
-    img_buffer = io.BytesIO()
+def generate_sheet_image(sheet_data):
+    """为单个画布生成更清晰的图像（使用非交互式后端，避免线程安全问题）"""
+    # 创建图片缓冲区
+    buffer = io.BytesIO()
     
-    # 为每个画布创建一个图像
-    images = []
-    
-    for sheet in xmind_data:
-        # 创建网络图
+    try:
+        # 创建更高级的网络图布局
         G = nx.DiGraph()
-        pos = {}
         node_labels = {}
         
-        # 递归遍历主题，构建网络图
-        def traverse_graph(topic, parent=None, node_id=0):
+        # 递归遍历主题，构建网络图和节点属性
+        def traverse_graph(topic, parent=None, node_id=0, level=0):
             current_id = node_id
             title = topic.get('title', 'Untitled')
             
-            # 添加当前节点
-            G.add_node(current_id)
+            # 添加当前节点和属性
+            G.add_node(current_id, title=title, level=level)
             node_labels[current_id] = title
             
-            # 设置节点位置（简化版树状布局）
-            if parent is None:
-                pos[current_id] = (0, 0)
-            else:
-                # 计算子节点位置
-                children_count = 0
-                if 'topics' in topic:
-                    if isinstance(topic['topics'], list):
-                        children_count = len(topic['topics'])
-                    elif isinstance(topic['topics'], dict):
-                        for subtopics in topic['topics'].values():
-                            children_count += len(subtopics)
-                
-                # 基于层级和父节点位置设置位置
-                level = 1
-                p = parent
-                while p is not None:
-                    level += 1
-                    p = [n for n in G.predecessors(p)]
-                    p = p[0] if p else None
-                
-                # 确定水平位置
-                x_pos = -level * 2
-                y_pos = 0
-                
-                # 如果有父节点，基于父节点位置调整
-                if parent is not None:
-                    parent_pos = pos[parent]
-                    # 简单的树状布局
-                    x_pos = parent_pos[0] - 2
-                    # 为了避免节点重叠，使用不同的y位置
-                    existing_children = list(G.successors(parent))
-                    y_pos = parent_pos[1] - (len(existing_children) * 1.5)
-                
-                pos[current_id] = (x_pos, y_pos)
-                
-                # 连接父节点
-                if parent is not None:
-                    G.add_edge(parent, current_id)
+            # 连接父节点
+            if parent is not None:
+                G.add_edge(parent, current_id)
             
             # 处理子主题
             next_id = current_id + 1
+            child_count = 0
+            
             if 'topics' in topic:
                 if isinstance(topic['topics'], list):
                     for subtopic in topic['topics']:
-                        next_id = traverse_graph(subtopic, current_id, next_id)
+                        next_id = traverse_graph(subtopic, current_id, next_id, level + 1)
+                        child_count += 1
                 elif isinstance(topic['topics'], dict):
                     for direction, subtopics in topic['topics'].items():
                         for subtopic in subtopics:
-                            next_id = traverse_graph(subtopic, current_id, next_id)
+                            next_id = traverse_graph(subtopic, current_id, next_id, level + 1)
+                            child_count += 1
             
+            # 返回更新后的ID和子节点数量
             return next_id
         
         # 开始构建图
-        if 'topic' in sheet:
-            traverse_graph(sheet['topic'])
+        if 'topic' in sheet_data:
+            traverse_graph(sheet_data['topic'])
         
         # 创建图像
-        plt.figure(figsize=(20, 15))
+        plt.figure(figsize=(24, 18))
         
-        # 绘制节点和边
-        nx.draw_networkx_nodes(G, pos, node_size=3000, node_color='lightblue')
-        nx.draw_networkx_edges(G, pos, edge_color='gray', arrows=True)
-        nx.draw_networkx_labels(G, pos, node_labels, font_size=10, font_family='SimHei')
+        # 设置字体支持中文，使用多种回退字体
+        plt.rcParams['font.sans-serif'] = ['SimHei', 'WenQuanYi Micro Hei', 'Heiti TC']
+        plt.rcParams['axes.unicode_minus'] = False
+        
+        # 使用更智能的布局算法
+        # 计算节点层次
+        levels = {n: d['level'] for n, d in G.nodes(data=True)}
+        
+        # 创建基于层次的位置布局
+        pos = {}
+        # 根节点居中放置
+        root_nodes = [n for n, d in G.in_degree() if d == 0]
+        if root_nodes:
+            root = root_nodes[0]
+            pos[root] = (0, 0)
+            
+            # 为每个层次安排位置
+            level_nodes = {0: [root]}
+            for level in range(max(levels.values()) + 1):
+                if level not in level_nodes:
+                    continue
+                    
+                for node in level_nodes[level]:
+                    children = list(G.successors(node))
+                    child_count = len(children)
+                    
+                    if child_count > 0:
+                        # 为子节点分配位置，避免重叠
+                        if level not in level_nodes:
+                            level_nodes[level] = []
+                        
+                        level_nodes[level + 1] = level_nodes.get(level + 1, []) + children
+                        
+                        # 计算子节点的垂直间距
+                        if child_count == 1:
+                            # 只有一个子节点，居中
+                            pos[children[0]] = (pos[node][0] - 3, pos[node][1])
+                        else:
+                            # 多个子节点，均匀分布
+                            spacing = min(8, child_count * 1.5)  # 根据子节点数量调整间距
+                            start_y = pos[node][1] - (spacing / 2)
+                            
+                            for i, child in enumerate(children):
+                                pos[child] = (pos[node][0] - 3, start_y + (spacing / (child_count - 1) * i) if child_count > 1 else start_y)
+        
+        # 如果pos为空，使用spring布局作为备选
+        if not pos:
+            pos = nx.spring_layout(G, seed=42, k=0.3, iterations=100)
+        
+        # 为不同层级的节点设置不同颜色
+        node_colors = []
+        for n, d in G.nodes(data=True):
+            level = d.get('level', 0)
+            # 使用层次相关的颜色
+            colors = ['#FFD700', '#98FB98', '#87CEFA', '#DDA0DD', '#FFA07A', '#F0E68C']
+            color_idx = min(level, len(colors) - 1)
+            node_colors.append(colors[color_idx])
+        
+        # 调整节点大小
+        node_sizes = [2500 + len(label) * 50 for label in node_labels.values()]
+        
+        # 绘制节点
+        nx.draw_networkx_nodes(G, pos, node_size=node_sizes, node_color=node_colors, alpha=0.9, edgecolors='gray')
+        
+        # 绘制边，使用不同宽度
+        nx.draw_networkx_edges(G, pos, edge_color='gray', width=1.5, arrows=True, arrowsize=20)
+        
+        # 绘制标签，调整字体大小
+        font_sizes = [min(12, max(8, 120 / (len(label) + 1))) for label in node_labels.values()]
+        
+        # 单独绘制每个标签以控制字体大小
+        for node, label in node_labels.items():
+            size = min(12, max(8, 120 / (len(label) + 1)))
+            nx.draw_networkx_labels(G.subgraph([node]), pos, {node: label}, font_size=size, font_family='SimHei', font_weight='bold')
         
         # 设置标题
-        plt.title(sheet.get('title', 'Untitled Sheet'), fontsize=16, fontfamily='SimHei')
+        plt.title(sheet_data.get('title', 'Untitled Sheet'), fontsize=20, fontfamily='SimHei', pad=20)
         plt.axis('off')
         plt.tight_layout()
         
-        # 保存到临时缓冲区
-        canvas = FigureCanvas(plt.gcf())
-        canvas.draw()
+        # 保存到缓冲区
+        plt.savefig(buffer, format='png', dpi=100, bbox_inches='tight', facecolor='white')
+        buffer.seek(0)
         
-        # 将matplotlib图形转换为PIL图像
-        pil_image = Image.frombytes('RGB', canvas.get_width_height(), canvas.tostring_rgb())
-        images.append(pil_image)
+    except Exception as e:
+        # 捕获所有异常，确保plt.close()执行
+        print(f"生成图片时出错: {str(e)}")
+    finally:
+        # 清理当前图形，避免内存泄漏
+        plt.close('all')  # 关闭所有图形，更彻底的清理
+    
+    return buffer
+
+def xmind_to_image(xmind_data):
+    """将XMind数据转换为图片（主画布）"""
+    if not xmind_data:
+        return None
+    
+    # 默认使用第一个画布（主画布）
+    main_sheet = xmind_data[0]
+    return generate_sheet_image(main_sheet)
+
+# 清理临时数据文件的函数
+def cleanup_temp_files():
+    """清理过期的临时数据文件"""
+    try:
+        import time
+        current_time = time.time()
+        # 清理超过2小时的文件
+        max_age = 2 * 3600
         
-        # 清除当前图形
-        plt.close()
+        for filename in os.listdir(app.config['UPLOAD_FOLDER']):
+            if filename.startswith('xmind_data_') and filename.endswith('.json'):
+                file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+                if os.path.exists(file_path):
+                    file_age = current_time - os.path.getmtime(file_path)
+                    if file_age > max_age:
+                        try:
+                            os.remove(file_path)
+                        except:
+                            pass
+    except:
+        # 忽略清理过程中的错误
+        pass
+
+# 每次请求后尝试清理过期文件和管理缓存
+@app.after_request
+def after_request(response):
+    # 异步清理临时文件，避免阻塞响应
+    import threading
+    threading.Thread(target=cleanup_temp_files).start()
     
-    # 如果有多个画布，将它们合并
-    if images:
-        if len(images) == 1:
-            # 单个画布直接保存
-            images[0].save(img_buffer, format='PNG')
-        else:
-            # 多个画布，计算总高度
-            total_width = max(img.width for img in images)
-            total_height = sum(img.height for img in images)
-            
-            # 创建新图像
-            combined = Image.new('RGB', (total_width, total_height), color='white')
-            
-            # 粘贴所有图像
-            y_offset = 0
-            for img in images:
-                combined.paste(img, ((total_width - img.width) // 2, y_offset))
-                y_offset += img.height
-            
-            # 保存合并后的图像
-            combined.save(img_buffer, format='PNG')
-    
-    img_buffer.seek(0)
-    return img_buffer
+    # 限制缓存大小，避免内存占用过大
+    if 'image_cache' in globals():
+        max_cache_size = 10  # 最多缓存10张图片
+        if len(image_cache) > max_cache_size:
+            # 删除最早添加的缓存项
+            first_key = next(iter(image_cache))
+            del image_cache[first_key]
+    return response
 
 # 错误处理
 @app.errorhandler(413)
 def request_entity_too_large(error):
     flash('文件太大，最大支持100MB')
+    return redirect(url_for('index'))
+
+@app.errorhandler(404)
+def not_found_error(error):
+    flash('请求的页面不存在')
+    return redirect(url_for('index'))
+
+@app.errorhandler(500)
+def internal_server_error(error):
+    flash('服务器内部错误，请稍后再试')
+    return redirect(url_for('index'))
+
+@app.errorhandler(Exception)
+def general_exception_handler(error):
+    # 捕获其他未明确处理的异常
+    flash(f'处理请求时出错: {str(error)}')
     return redirect(url_for('index'))
 
 if __name__ == '__main__':
