@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, send_file, session
+from flask import Flask, render_template, request, redirect, url_for, flash, send_file, session, jsonify
 import os
 import tempfile
 import io
@@ -117,19 +117,23 @@ def upload_file():
             
             # 保存画布信息，标记解析为已完成
             session['sheets_info'] = sheets_info
-            session['parsing_completed'] = True  # 对于36M这样的大文件，解析已经在xmind_to_dict完成
+            session['parsing_completed'] = True  # 标记XMind文件解析完成
+            session['image_generation_started'] = False  # 图片生成尚未开始
             
             # 获取文件大小，用于前端提示
             import time
             file_size = os.path.getsize(temp_file_path) / (1024 * 1024)  # MB
             
             # 渲染画布选择页面，为所有文件返回模板
+            # 传递详细的解析状态信息给前端
             return render_template('image_result.html', 
                                  sheets=sheets_info,
                                  current_sheet=0,
                                  filename=file.filename,
-                                 parsing_completed=True,
-                                 file_size=file_size)
+                                 parsing_completed=True,  # 解析已完成，允许切换画布
+                                 image_generation_in_progress=False,
+                                 file_size=file_size,
+                                 large_file_warning=file_size > 20)
         else:
             # 生成HTML结构（列表形式）
             html_structure = parse_xmind_structure(xmind_data)
@@ -154,18 +158,21 @@ def upload_file():
 def get_sheet_image(sheet_id):
     # 检查session中是否有解析数据文件路径
     if 'data_file_path' not in session or 'sheets_info' not in session:
-        flash('没有找到解析数据，请重新上传文件')
-        return redirect(url_for('index'))
+        # 返回错误图片而不是重定向，避免前端交互中断
+        return generate_error_image('未找到解析数据，请刷新页面'), 503
     
     data_file_path = session['data_file_path']
     sheets_info = session['sheets_info']
     
     # 检查画布ID是否有效
     if sheet_id < 0 or sheet_id >= len(sheets_info):
-        flash('无效的画布ID')
-        return redirect(url_for('index'))
+        # 返回错误图片
+        return generate_error_image('无效的画布ID'), 404
     
     try:
+        # 标记图片生成已开始
+        session['image_generation_started'] = True
+        
         # 从临时文件加载解析后的数据
         import json
         with open(data_file_path, 'r', encoding='utf-8') as f:
@@ -180,8 +187,10 @@ def get_sheet_image(sheet_id):
                        download_name=f'sheet_{sheet_id}.png')
     
     except Exception as e:
-        flash(f'生成图片时出错: {str(e)}')
-        return redirect(url_for('index'))
+        print(f'生成图片时出错: {str(e)}')
+        # 返回错误图片而不是重定向
+        error_msg = f'生成图片失败: {str(e)[:50]}...'
+        return generate_error_image(error_msg), 500
 
 # 下载特定画布的图片路由
 @app.route('/download_sheet_image/<int:sheet_id>')
@@ -217,6 +226,32 @@ def download_sheet_image(sheet_id):
     except Exception as e:
         flash(f'生成图片时出错: {str(e)}')
         return redirect(url_for('index'))
+
+@app.route('/check_parsing_status')
+def check_parsing_status():
+    """检查解析状态（增强版）"""
+    # 获取解析状态信息
+    parsing_completed = session.get('parsing_completed', False)
+    image_generation_started = session.get('image_generation_started', False)
+    
+    # 对于长时间解析的情况，添加更详细的状态信息
+    response_data = {
+        'parsing_completed': parsing_completed,
+        'image_generation_started': image_generation_started
+    }
+    
+    # 如果解析已完成，确保图片生成状态也更新
+    if parsing_completed:
+        response_data['status_message'] = '解析已完成'
+    elif image_generation_started:
+        response_data['status_message'] = '图片生成中'
+    else:
+        response_data['status_message'] = '解析进行中'
+    
+    # 记录状态检查请求，用于调试
+    print(f"[状态检查] 解析完成: {parsing_completed}, 图片生成开始: {image_generation_started}")
+    
+    return jsonify(response_data)
 
 # 优化解析大文件的函数
 def parse_xmind_structure(xmind_data):
@@ -255,6 +290,38 @@ def parse_xmind_structure(xmind_data):
         html_structure.append(f"</div>")
     
     return '\n'.join(html_structure)
+
+def generate_error_image(error_message):
+    """生成包含错误信息的图片，而不是重定向"""
+    buffer = io.BytesIO()
+    
+    try:
+        # 创建一个简单的错误提示图片
+        fig, ax = plt.subplots(figsize=(12, 6))
+        
+        # 设置背景色和文字
+        ax.set_facecolor('#ffebee')
+        fig.patch.set_facecolor('#ffebee')
+        
+        # 添加错误图标和消息
+        ax.text(0.5, 0.7, '⚠️', fontsize=48, ha='center', va='center')
+        ax.text(0.5, 0.5, '加载失败', fontsize=24, ha='center', va='center', fontweight='bold', color='#c62828')
+        ax.text(0.5, 0.3, error_message, fontsize=14, ha='center', va='center', wrap=True, color='#555')
+        
+        # 隐藏坐标轴
+        ax.axis('off')
+        plt.tight_layout()
+        
+        # 保存到缓冲区
+        plt.savefig(buffer, format='png', dpi=80, bbox_inches='tight')
+        buffer.seek(0)
+        
+    except Exception as e:
+        print(f'生成错误图片时出错: {str(e)}')
+    finally:
+        plt.close('all')
+    
+    return buffer
 
 def generate_sheet_image(sheet_data):
     """为单个画布生成更清晰的图像（使用非交互式后端，避免线程安全问题）"""
