@@ -1,0 +1,6 @@
+Flask==2.2.5
+xmindparser==1.2.0
+matplotlib==3.7.1
+networkx==2.8.4
+pillow==9.5.0
+reportlab==3.6.12

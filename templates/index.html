@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>XMind解析器</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .upload-container {
+            background-color: #fff;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        .file-input {
+            display: none;
+        }
+        .custom-file-upload {
+            background-color: #3498db;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            display: inline-block;
+            margin-bottom: 15px;
+            transition: background-color 0.3s;
+        }
+        .custom-file-upload:hover {
+            background-color: #2980b9;
+        }
+        .upload-btn {
+            background-color: #2ecc71;
+            color: white;
+            border: none;
+            padding: 10px 30px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.3s;
+        }
+        .upload-btn:hover {
+            background-color: #27ae60;
+        }
+        .file-name {
+            margin: 10px 0;
+            color: #7f8c8d;
+        }
+        .result-container {
+            background-color: #fff;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+        .error-message {
+            background-color: #ffdddd;
+            color: #d32f2f;
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>XMind文件解析器</h1>
+    <div class="upload-container">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="error-message">{{ message }}</div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+        <form method="post" action="/upload" enctype="multipart/form-data">
+            <label for="file-upload" class="custom-file-upload">
+                选择XMind文件
+            </label>
+            <input id="file-upload" class="file-input" type="file" name="file" accept=".xmind" required>
+            <div class="file-name" id="file-name">未选择文件</div>
+            <br>
+            <div style="margin: 20px 0;">
+                <label style="font-weight: bold; display: block; margin-bottom: 10px;">选择解析方式：</label>
+                <label style="margin-right: 20px;">
+                    <input type="radio" name="parse_mode" value="list" checked> 列表形式
+                </label>
+                <label>
+                    <input type="radio" name="parse_mode" value="image"> 图片形式
+                </label>
+            </div>
+            <button type="submit" class="upload-btn">上传并解析</button>
+        </form>
+    </div>
+    
+    <script>
+        document.getElementById('file-upload').addEventListener('change', function(e) {
+            const fileName = e.target.files[0] ? e.target.files[0].name : '未选择文件';
+            document.getElementById('file-name').textContent = fileName;
+        });
+    </script>
+</body>
+</html>
